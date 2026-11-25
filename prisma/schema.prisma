@@ -1,0 +1,449 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Farm {
+  id               String   @id @default(uuid())
+  name             String
+  location         String
+  totalArea        Float // Total acres
+  ownershipType    String   @default("OWNED") // OWNED or LEASED
+  leaseCostPerYear Float?   @default(0)
+  description      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  fields                 Field[]
+  crops                  Crop[]
+  activities             Activity[]
+  labourLogs             LabourLog[]
+  machinery              Machinery[]
+  machineryLogs          MachineryLog[]
+  irrigationLogs         IrrigationLog[]
+  inventoryItems         InventoryItem[]
+  expenses               Expense[]
+  reminders              FarmReminder[]
+  fertilizerPurchases    FertilizerPurchase[]
+  fertilizerApplications FertilizerApplication[]
+}
+
+model Field {
+  id               String   @id @default(uuid())
+  farmId           String
+  farm             Farm     @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  name             String // e.g. Khet 1, North Field
+  area             Float // Acres
+  location         String?
+  soilType         String // Black, Alluvial, Red, Clay, Sandy Loam
+  irrigationSource String // Canal, Borewell, Tubewell, Drip, Rainfed
+  status           String   @default("ACTIVE") // ACTIVE, FALLOW, INACTIVE
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  sections               FieldSection[]
+  crops                  Crop[]
+  activities             Activity[]
+  labourLogs             LabourLog[]
+  machineryLogs          MachineryLog[]
+  irrigationLogs         IrrigationLog[]
+  harvestLogs            HarvestLog[]
+  expenses               Expense[]
+  fertilizerApplications FertilizerApplication[]
+}
+
+model FieldSection {
+  id        String   @id @default(uuid())
+  fieldId   String
+  field     Field    @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  name      String // e.g. Section A, Plot 1
+  area      Float // Acres
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  crops Crop[]
+}
+
+model Crop {
+  id                   String        @id @default(uuid())
+  farmId               String
+  farm                 Farm          @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  fieldId              String
+  field                Field         @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  fieldSectionId       String?
+  fieldSection         FieldSection? @relation(fields: [fieldSectionId], references: [id], onDelete: SetNull)
+  name                 String // e.g. Wheat (गेहूँ), Soybean, Mustard
+  variety              String? // e.g. Sharbati, JS 335
+  season               String // KHARIF, RABI, ZAID, PERENNIAL
+  area                 Float // Acres allocated
+  sowingDate           DateTime
+  expectedHarvestDate  DateTime?
+  actualHarvestDate    DateTime?
+  status               String        @default("GROWING") // PLANNING, SOWN, GROWING, HARVESTING, HARVESTED, CLOSED
+  currentStageNumber   Int           @default(1) // 1 to 9
+  currentStageName     String        @default("Field Preparation")
+  estDaysToHarvest     Int?          @default(35) // Editable estimate (e.g. 35 for kheera, 70 for tamatar)
+  expectedFirstHarvest DateTime?
+  actualFirstHarvest   DateTime?
+  targetYield          Float? // Target in Quintals or Kg
+  actualYield          Float? // Actual produced
+  totalProductionKg    Float         @default(0)
+  ratePerKg            Float         @default(0)
+  hamaliRatePerPack    Float?
+  hamaliPackSize       Float?
+  hamaliPackUnit       String?
+  notes                String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  activities             Activity[]
+  labourLogs             LabourLog[]
+  harvestLogs            HarvestLog[]
+  sales                  CropSale[]
+  expenses               Expense[]
+  stages                 CropStage[]
+  reminders              FarmReminder[]
+  productionEntries      ProductionEntry[]
+  productionBatches      ProductionBatch[]
+  fertilizerApplications FertilizerApplication[]
+  fertilizerMixes        CropFertilizerMix[]
+}
+
+model ProductionBatch {
+  id             String            @id @default(uuid())
+  cropId         String
+  crop           Crop              @relation(fields: [cropId], references: [id], onDelete: Cascade)
+  entryDate      DateTime
+  transportCost  Float             @default(0)
+  hamaliCost     Float             @default(0)
+  commissionCost Float             @default(0)
+  createdAt      DateTime          @default(now())
+  entries        ProductionEntry[]
+}
+
+model ProductionEntry {
+  id             String           @id @default(uuid())
+  cropId         String
+  crop           Crop             @relation(fields: [cropId], references: [id], onDelete: Cascade)
+  batchId        String?
+  batch          ProductionBatch? @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  entryDate      DateTime
+  productionKg   Float
+  ratePerKg      Float
+  transportCost  Float            @default(0)
+  hamaliCost     Float            @default(0)
+  commissionCost Float            @default(0)
+  createdAt      DateTime         @default(now())
+
+  @@index([cropId, entryDate])
+}
+
+model Activity {
+  id            String   @id @default(uuid())
+  farmId        String
+  farm          Farm     @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  fieldId       String?
+  field         Field?   @relation(fields: [fieldId], references: [id], onDelete: SetNull)
+  cropId        String?
+  crop          Crop?    @relation(fields: [cropId], references: [id], onDelete: SetNull)
+  stageNumber   Int? // 1 to 9 corresponding to the horticulture stage
+  title         String // e.g. Deep Ploughing, NPK Fertilizer, Weeding
+  activityType  String // SOIL_PREPARATION, SOWING, WEEDING, FERTILIZING, PESTICIDE, IRRIGATION, HARVESTING, THRESHING, OTHER
+  date          DateTime
+  status        String   @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, CANCELLED
+  workerCount   Int?     @default(0)
+  workDays      Float?   @default(0)
+  wagePerDay    Float?   @default(0)
+  materialCost  Float?   @default(0)
+  cost          Float    @default(0) // Total activity cost (labour + material)
+  machineryUsed String?
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  labourLogs LabourLog[]
+}
+
+model Labourer {
+  id               String   @id @default(uuid())
+  name             String
+  phone            String?
+  workerType       String   @default("DAILY_WAGE") // DAILY_WAGE, CONTRACT, PERMANENT
+  dailyWage        Float    @default(400)
+  monthlySalary    Float?   @default(0)
+  emergencyContact String?
+  status           String   @default("ACTIVE") // ACTIVE, INACTIVE
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  logs     LabourLog[]
+  payments LabourPayment[]
+}
+
+model LabourLog {
+  id               String    @id @default(uuid())
+  labourerId       String
+  labourer         Labourer  @relation(fields: [labourerId], references: [id], onDelete: Cascade)
+  farmId           String
+  farm             Farm      @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  fieldId          String?
+  field            Field?    @relation(fields: [fieldId], references: [id], onDelete: SetNull)
+  cropId           String?
+  crop             Crop?     @relation(fields: [cropId], references: [id], onDelete: SetNull)
+  activityId       String?
+  activity         Activity? @relation(fields: [activityId], references: [id], onDelete: SetNull)
+  date             DateTime
+  attendanceStatus String    @default("PRESENT") // PRESENT, ABSENT, HALF_DAY
+  hoursWorked      Float     @default(8)
+  dailyWage        Float
+  totalEarned      Float
+  amountPaid       Float     @default(0)
+  paymentStatus    String    @default("PENDING") // PAID, PARTIAL, PENDING
+  notes            String?
+  createdAt        DateTime  @default(now())
+}
+
+model LabourPayment {
+  id          String   @id @default(uuid())
+  labourerId  String
+  labourer    Labourer @relation(fields: [labourerId], references: [id], onDelete: Cascade)
+  date        DateTime
+  amount      Float
+  paymentMode String   @default("CASH") // CASH, BANK_TRANSFER, UPI
+  notes       String?
+  createdAt   DateTime @default(now())
+}
+
+model Machinery {
+  id               String   @id @default(uuid())
+  farmId           String
+  farm             Farm     @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  name             String // e.g. John Deere 5050D Tractor, Rotavator
+  model            String?
+  ownership        String   @default("OWNED") // OWNED, RENTED
+  fuelType         String   @default("DIESEL") // DIESEL, ELECTRIC, NONE
+  hourlyRentalRate Float?   @default(0)
+  status           String   @default("AVAILABLE") // AVAILABLE, IN_USE, MAINTENANCE
+  notes            String?
+  createdAt        DateTime @default(now())
+
+  logs MachineryLog[]
+}
+
+model MachineryLog {
+  id              String    @id @default(uuid())
+  machineryId     String
+  machinery       Machinery @relation(fields: [machineryId], references: [id], onDelete: Cascade)
+  farmId          String
+  farm            Farm      @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  fieldId         String?
+  field           Field?    @relation(fields: [fieldId], references: [id], onDelete: SetNull)
+  date            DateTime
+  hoursUsed       Float
+  fuelLitres      Float     @default(0)
+  fuelCost        Float     @default(0)
+  maintenanceCost Float     @default(0)
+  rentalCost      Float     @default(0)
+  notes           String?
+  createdAt       DateTime  @default(now())
+}
+
+model IrrigationLog {
+  id               String   @id @default(uuid())
+  farmId           String
+  farm             Farm     @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  fieldId          String
+  field            Field    @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  date             DateTime
+  source           String // Borewell, Canal, Drip, Sprinkler
+  durationHours    Float
+  electricityUnits Float?   @default(0)
+  fuelLitres       Float?   @default(0)
+  cost             Float    @default(0)
+  notes            String?
+  createdAt        DateTime @default(now())
+}
+
+model HarvestLog {
+  id              String   @id @default(uuid())
+  cropId          String
+  crop            Crop     @relation(fields: [cropId], references: [id], onDelete: Cascade)
+  fieldId         String
+  field           Field    @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  harvestDate     DateTime
+  quantity        Float // Quantity (e.g. Kg or Quintals)
+  unit            String   @default("Kg")
+  grade           String?  @default("Grade A") // Grade A, Grade B
+  cratesCount     Int?     @default(0)
+  labourCount     Int?     @default(0)
+  storageLocation String? // e.g. Main Barn, Mandi Warehouse
+  notes           String?
+  createdAt       DateTime @default(now())
+}
+
+model InventoryItem {
+  id                     String                  @id @default(uuid())
+  farmId                 String
+  farm                   Farm                    @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  name                   String // e.g. Urea, DAP 50kg, Wheat Grain (Stock)
+  category               String // CROP_HARVEST, SEED, FERTILIZER, PESTICIDE, EQUIPMENT_SUPPLY
+  quantity               Float
+  unit                   String // Quintal, Kg, Bag, Litre
+  minStockAlert          Float                   @default(5)
+  unitPrice              Float                   @default(0)
+  notes                  String?
+  updatedAt              DateTime                @updatedAt
+  createdAt              DateTime                @default(now())
+  fertilizerPurchases    FertilizerPurchase[]
+  fertilizerApplications FertilizerApplication[]
+}
+
+model FertilizerPurchase {
+  id              String        @id @default(uuid())
+  farmId          String
+  farm            Farm          @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  inventoryItemId String
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  purchaseDate    DateTime
+  quantity        Float
+  unit            String
+  ratePerUnit     Float
+  totalCost       Float
+  supplier        String?
+  notes           String?
+  createdAt       DateTime      @default(now())
+
+  @@index([farmId, purchaseDate])
+  @@index([inventoryItemId])
+}
+
+model FertilizerApplication {
+  id              String        @id @default(uuid())
+  farmId          String
+  farm            Farm          @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  cropId          String
+  crop            Crop          @relation(fields: [cropId], references: [id], onDelete: Cascade)
+  fieldId         String?
+  field           Field?        @relation(fields: [fieldId], references: [id], onDelete: SetNull)
+  inventoryItemId String
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  applicationDate DateTime
+  quantity        Float
+  unit            String
+  unitPrice       Float
+  totalCost       Float
+  method          String?
+  notes           String?
+  createdAt       DateTime      @default(now())
+
+  @@index([farmId, applicationDate])
+  @@index([cropId, applicationDate])
+}
+
+model CropFertilizerMix {
+  id        String   @id @default(uuid())
+  cropId    String
+  crop      Crop     @relation(fields: [cropId], references: [id], onDelete: Cascade)
+  name      String
+  items     String // JSON array: inventory item, dose quantity, and dose unit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([cropId, createdAt])
+}
+
+model CropSale {
+  id             String   @id @default(uuid())
+  cropId         String?
+  crop           Crop?    @relation(fields: [cropId], references: [id], onDelete: SetNull)
+  buyerName      String // e.g. Aggarwal Traders, Mandi Agent Ramesh
+  buyerPhone     String?
+  mandiName      String? // e.g. Azadpur Mandi, Vashi Mandi, Indore Mandi
+  saleDate       DateTime
+  quantity       Float // Quantity in Kg or Quintals
+  unit           String   @default("Kg")
+  pricePerUnit   Float // Price per Kg or Quintal
+  totalAmount    Float // Gross: quantity * pricePerUnit
+  commission     Float?   @default(0) // Aadhat / Mandi commission
+  transportCost  Float?   @default(0) // Freight / Trolley / Pickup
+  hamaliCost     Float?   @default(0) // Labour / Hamali / Loading-unloading
+  deductions     Float    @default(0) // Total deductions
+  netAmount      Float // totalAmount - deductions
+  amountReceived Float    @default(0)
+  paymentStatus  String   @default("PAID") // PAID, PARTIAL, PENDING
+  paymentMode    String   @default("BANK_TRANSFER") // CASH, BANK_TRANSFER, UPI, CHEQUE
+  invoiceNumber  String   @unique
+  notes          String?
+  createdAt      DateTime @default(now())
+}
+
+model Expense {
+  id            String   @id @default(uuid())
+  farmId        String
+  farm          Farm     @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  fieldId       String?
+  field         Field?   @relation(fields: [fieldId], references: [id], onDelete: SetNull)
+  cropId        String?
+  crop          Crop?    @relation(fields: [cropId], references: [id], onDelete: SetNull)
+  stageNumber   Int? // Corresponding horticulture stage 1-9
+  category      String // SEEDS, FERTILIZERS, PESTICIDES, LABOUR, MACHINERY_FUEL, IRRIGATION, LEASE, TRANSPORT, EQUIPMENT_REPAIR, OTHER
+  title         String // e.g. Purchase of 4 bags DAP, Tractor Diesel
+  amount        Float
+  date          DateTime
+  paymentStatus String   @default("PAID") // PAID, PENDING
+  paymentMode   String   @default("CASH") // CASH, UPI, BANK_TRANSFER
+  receiptNumber String?
+  notes         String?
+  createdAt     DateTime @default(now())
+}
+
+model CropStage {
+  id            String    @id @default(uuid())
+  cropId        String
+  crop          Crop      @relation(fields: [cropId], references: [id], onDelete: Cascade)
+  stageNumber   Int // 1 to 9
+  stageKey      String // FIELD_PREP, BED_PREP, BASAL_DOSE, DRIP_SETUP, MULCHING, PLANTING, CROP_CARE, HARVESTING, MANDI_SALE
+  stageName     String // Field preparation, Bed preparation, etc.
+  hindiName     String? // जुताई, बेड निर्माण, बेसल डोज़, etc.
+  status        String    @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, SKIPPED
+  estDaysOffset Int       @default(0) // Relative offset in days from planting
+  expectedDate  DateTime?
+  actualDate    DateTime?
+  completedDate DateTime?
+  workerCount   Int?      @default(0)
+  workDays      Float?    @default(0)
+  wagePerDay    Float?    @default(0)
+  labourCost    Float     @default(0)
+  materialItems String? // JSON details of materials, quantities, prices
+  materialCost  Float     @default(0)
+  totalCost     Float     @default(0)
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([cropId, stageNumber])
+}
+
+model FarmReminder {
+  id          String   @id @default(uuid())
+  farmId      String?
+  farm        Farm?    @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  cropId      String?
+  crop        Crop?    @relation(fields: [cropId], references: [id], onDelete: Cascade)
+  stageNumber Int?
+  title       String
+  category    String // DRIP_CHECK, FERTIGATION, SPRAY, LABOUR_BOOKING, HARVEST_WINDOW, MANDI_PAYMENT, OTHER
+  dueDate     DateTime
+  isResolved  Boolean  @default(false)
+  priority    String   @default("MEDIUM") // LOW, MEDIUM, HIGH, URGENT
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
