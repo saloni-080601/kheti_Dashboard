@@ -41,7 +41,7 @@ export async function PUT(request: NextRequest) {
         include: { crop: true, inventoryItem: true },
       });
       if (existing.length !== requested.length) throw new Error('One or more fertilizer application records were not found.');
-      const requestedById = new Map(requested.map((row: any) => [row.id, row.quantity]));
+      const requestedById = new Map<string, number>(requested.map((row: any): [string, number] => [row.id, row.quantity]));
       const result = [];
 
       for (const application of existing) {

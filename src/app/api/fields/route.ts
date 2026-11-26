@@ -107,6 +107,62 @@ export async function POST(request: NextRequest) {
   }
 }
 
+export async function PUT(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const body = await request.json();
+    const id = searchParams.get('id') || body.id;
+    const { name, area, location, soilType, irrigationSource, status, notes } = body;
+    const requestedArea = Number(area);
+    if (!id || !name?.trim() || !Number.isFinite(requestedArea) || requestedArea <= 0) {
+      return NextResponse.json({ error: 'Field ID, name, and a valid area greater than zero are required.' }, { status: 400 });
+    }
+
+    const field = await prisma.$transaction(async (tx) => {
+      const existing = await tx.field.findUnique({
+        where: { id },
+        include: {
+          farm: { include: { fields: { where: { id: { not: id } } } } },
+          sections: true,
+          crops: { where: { status: { in: ['PLANNING', 'SOWN', 'GROWING', 'HARVESTING'] } } },
+        },
+      });
+      if (!existing) throw new Error('Field not found.');
+
+      const acreageUsedByOtherFields = existing.farm.fields.reduce((sum, item) => sum + item.area, 0);
+      if (acreageUsedByOtherFields + requestedArea > existing.farm.totalArea + 0.01) {
+        throw new Error(`This farm has only ${Math.max(0, existing.farm.totalArea - acreageUsedByOtherFields).toFixed(1)} acres available for this field.`);
+      }
+      const cultivatedArea = existing.crops.reduce((sum, crop) => sum + crop.area, 0);
+      if (requestedArea + 0.01 < cultivatedArea) {
+        throw new Error(`Field area cannot be less than the ${cultivatedArea.toFixed(1)} acres used by active crops.`);
+      }
+      const subplotArea = existing.sections.reduce((sum, section) => sum + section.area, 0);
+      if (requestedArea + 0.01 < subplotArea) {
+        throw new Error(`Field area cannot be less than the ${subplotArea.toFixed(1)} acres assigned to sub-plots.`);
+      }
+
+      return tx.field.update({
+        where: { id },
+        data: {
+          name: name.trim(),
+          area: requestedArea,
+          location: location || '',
+          soilType: soilType || 'Alluvial Loam',
+          irrigationSource: irrigationSource || 'Canal & Borewell',
+          status: status || 'ACTIVE',
+          notes: notes || '',
+        },
+      });
+    });
+    return NextResponse.json(field);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to update field.';
+    console.error('Error updating field:', message);
+    return NextResponse.json({ error: message }, { status: /not found/i.test(message) ? 404 : 400 });
+  }
+}
+
 export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);

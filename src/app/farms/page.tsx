@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   Scissors,
   CheckCircle,
+  Pencil,
 } from 'lucide-react';
 
 export default function FarmsPage() {
@@ -27,6 +28,7 @@ export default function FarmsPage() {
   const [isFieldModalOpen, setIsFieldModalOpen] = useState(false);
   const [isSectionModalOpen, setIsSectionModalOpen] = useState(false);
   const [selectedFieldForSection, setSelectedFieldForSection] = useState<any>(null);
+  const [editingFieldId, setEditingFieldId] = useState('');
 
   // Form states
   const [farmForm, setFarmForm] = useState({
@@ -119,16 +121,18 @@ export default function FarmsPage() {
     e.preventDefault();
     setErrorMsg('');
     try {
-      const res = await fetch('/api/fields', {
-        method: 'POST',
+      const editing = Boolean(editingFieldId);
+      const res = await fetch(editing ? `/api/fields?id=${editingFieldId}` : '/api/fields', {
+        method: editing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fieldForm),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to create field');
+      if (!res.ok) throw new Error(data.error || (editing ? 'Failed to update field' : 'Failed to create field'));
 
-      setSuccessMsg('Field (Khet) created successfully!');
+      setSuccessMsg(editing ? 'Field (Khet) updated successfully!' : 'Field (Khet) created successfully!');
       setIsFieldModalOpen(false);
+      setEditingFieldId('');
       setFieldForm({
         farmId: farms[0]?.id || '',
         name: '',
@@ -143,6 +147,27 @@ export default function FarmsPage() {
     } catch (err: any) {
       setErrorMsg(err.message);
     }
+  };
+
+  const openFieldForEdit = (field: any) => {
+    setEditingFieldId(field.id);
+    setFieldForm({
+      farmId: field.farmId,
+      name: field.name || '',
+      area: String(field.area ?? ''),
+      location: field.location || '',
+      soilType: field.soilType || 'Alluvial Loam',
+      irrigationSource: field.irrigationSource || 'Canal & Borewell',
+      status: field.status || 'ACTIVE',
+      notes: field.notes || '',
+    });
+    setErrorMsg('');
+    setIsFieldModalOpen(true);
+  };
+
+  const closeFieldModal = () => {
+    setIsFieldModalOpen(false);
+    setEditingFieldId('');
   };
 
   const handleCreateSection = async (e: React.FormEvent) => {
@@ -223,6 +248,8 @@ export default function FarmsPage() {
           </button>
           <button
             onClick={() => {
+              setEditingFieldId('');
+              setFieldForm({ farmId: selectedFarmId !== 'ALL' ? selectedFarmId : farms[0]?.id || '', name: '', area: '', location: '', soilType: 'Black Cotton Soil', irrigationSource: 'Canal & Borewell', status: 'ACTIVE', notes: '' });
               setErrorMsg('');
               setIsFieldModalOpen(true);
             }}
@@ -341,6 +368,15 @@ export default function FarmsPage() {
                     </div>
                     <div className="flex items-center space-x-1.5">
                       <StatusBadge status={field.status} />
+                      <button
+                        type="button"
+                        onClick={() => openFieldForEdit(field)}
+                        className="rounded p-1 text-stone-400 transition-colors hover:text-blue-700"
+                        title="Edit field"
+                        aria-label={`Edit ${field.name}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
                       <button
                         onClick={() => handleDeleteField(field.id)}
                         className="text-stone-400 hover:text-rose-600 p-1 rounded transition-colors"
@@ -584,9 +620,9 @@ export default function FarmsPage() {
       {/* Modal: Add Field (Khet) */}
       <Modal
         isOpen={isFieldModalOpen}
-        onClose={() => setIsFieldModalOpen(false)}
-        title="Add Field (Khet) to Farm"
-        subtitle="A farm can contain multiple independent fields"
+        onClose={closeFieldModal}
+        title={editingFieldId ? 'Edit Field (Khet)' : 'Add Field (Khet) to Farm'}
+        subtitle={editingFieldId ? 'Update field details while preserving crop and subplot land limits' : 'A farm can contain multiple independent fields'}
       >
         <form onSubmit={handleCreateField} className="space-y-4">
           <div>
@@ -594,6 +630,7 @@ export default function FarmsPage() {
               Select Farm *
             </label>
             <select
+              disabled={Boolean(editingFieldId)}
               value={fieldForm.farmId}
               onChange={(e) => setFieldForm({ ...fieldForm, farmId: e.target.value })}
               className="w-full px-3 py-2 border border-stone-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/40 focus:outline-none bg-white font-medium"
@@ -703,7 +740,7 @@ export default function FarmsPage() {
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
-              onClick={() => setIsFieldModalOpen(false)}
+              onClick={closeFieldModal}
               className="px-4 py-2 border border-stone-300 rounded-xl text-sm font-semibold text-stone-700 hover:bg-stone-100"
             >
               Cancel
@@ -712,7 +749,7 @@ export default function FarmsPage() {
               type="submit"
               className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold shadow-sm"
             >
-              Save Field (खेत जोड़ें)
+              {editingFieldId ? 'Save Field Changes' : 'Save Field (खेत जोड़ें)'}
             </button>
           </div>
         </form>

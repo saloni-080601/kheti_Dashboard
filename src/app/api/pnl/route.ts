@@ -32,12 +32,12 @@ function cropSalesIncome(crop: any) {
   }
 
   let income = 0;
-  for (const amount of productionIncomeByDay.values()) income += amount;
-  for (const [key, amount] of mandiIncomeByDay) {
+  productionIncomeByDay.forEach((amount) => { income += amount; });
+  mandiIncomeByDay.forEach((amount, key) => {
     // Prefer Crop Management's sale record for a crop/day to avoid counting
     // the same dispatch again if it was also entered in Mandi Sales.
     if (!productionIncomeByDay.has(key)) income += amount;
-  }
+  });
   return income;
 }
 

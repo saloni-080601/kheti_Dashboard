@@ -293,6 +293,9 @@ export async function PUT(request: NextRequest) {
       actualFirstHarvest,
       sowingDate,
       notes,
+      name,
+      fieldId,
+      area,
     } = body;
 
     if (!id) return NextResponse.json({ error: 'Crop ID is required' }, { status: 400 });
@@ -304,6 +307,42 @@ export async function PUT(request: NextRequest) {
 
     if (!existingCrop) {
       return NextResponse.json({ error: 'Crop not found' }, { status: 404 });
+    }
+
+    let updatedArea: number | undefined;
+    if (name !== undefined || fieldId !== undefined || area !== undefined) {
+      if (name !== undefined && !String(name).trim()) {
+        return NextResponse.json({ error: 'Crop name is required.' }, { status: 400 });
+      }
+      if (area !== undefined) {
+        updatedArea = Number(area);
+        if (!Number.isFinite(updatedArea) || updatedArea <= 0) {
+          return NextResponse.json({ error: 'Enter a valid crop area greater than zero.' }, { status: 400 });
+        }
+      }
+
+      const targetFieldId = fieldId || existingCrop.fieldId;
+      const targetField = await prisma.field.findUnique({
+        where: { id: targetFieldId },
+        include: {
+          crops: {
+            where: {
+              id: { not: id },
+              status: { in: ['PLANNING', 'SOWN', 'GROWING', 'HARVESTING'] },
+            },
+          },
+        },
+      });
+      if (!targetField || targetField.farmId !== existingCrop.farmId) {
+        return NextResponse.json({ error: 'Select a valid field from this crop’s farm.' }, { status: 400 });
+      }
+      const requestedArea = updatedArea ?? existingCrop.area;
+      const occupiedArea = targetField.crops.reduce((sum, crop) => sum + crop.area, 0);
+      if (requestedArea > targetField.area - occupiedArea + 0.01) {
+        return NextResponse.json({
+          error: `This field has only ${Math.max(0, targetField.area - occupiedArea).toFixed(1)} acres available.`,
+        }, { status: 400 });
+      }
     }
 
     const newStageNumber = currentStageNumber !== undefined
@@ -323,7 +362,7 @@ export async function PUT(request: NextRequest) {
     // Recalibrate dynamic stage dates
     const recalculatedStages = calculateDynamicStageDates({
       sowingDate: basePlantingDate,
-      cropName: existingCrop.name,
+      cropName: name || existingCrop.name,
       estDaysToHarvest: newDaysToHarvest,
       actualPlantingDate: basePlantingDate,
       actualFirstHarvestDate: firstHarvestActual,
@@ -373,6 +412,9 @@ export async function PUT(request: NextRequest) {
       where: { id },
       data: {
         ...(status ? { status } : {}),
+        ...(name !== undefined ? { name: String(name).trim() } : {}),
+        ...(fieldId !== undefined ? { fieldId } : {}),
+        ...(updatedArea !== undefined ? { area: updatedArea } : {}),
         currentStageNumber: newStageNumber,
         currentStageName: newStageName,
         estDaysToHarvest: newDaysToHarvest,

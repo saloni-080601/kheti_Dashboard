@@ -4,6 +4,58 @@ import { prisma } from '@/lib/prisma';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    if (Array.isArray(body.entries)) {
+      const saleDate = new Date(`${body.entryDate}T00:00:00+05:30`);
+      const submitted = body.entries.map((entry: any) => ({
+        cropId: String(entry.cropId || ''),
+        parsed: parseSaleBatch({ entryDate: body.entryDate, lines: entry.lines, transportCost: entry.transportCost }),
+      }));
+      if (Number.isNaN(saleDate.getTime()) || !body.entryDate || !submitted.length || submitted.some((entry: any) => !entry.cropId || !entry.parsed)) {
+        return NextResponse.json({ error: 'Choose a date and enter valid quantity, rate, and crop for every row.' }, { status: 400 });
+      }
+      if (new Set(submitted.map((entry: any) => entry.cropId)).size !== submitted.length) {
+        return NextResponse.json({ error: 'Choose each crop only once in this bill.' }, { status: 400 });
+      }
+
+      const cropIds = submitted.map((entry: any) => entry.cropId);
+      const cropRecords = await prisma.crop.findMany({
+        where: { id: { in: cropIds } },
+        select: { id: true, name: true, hamaliRatePerPack: true, hamaliPackSize: true, hamaliPackUnit: true },
+      });
+      if (cropRecords.length !== cropIds.length) return NextResponse.json({ error: 'One or more selected crops could not be found.' }, { status: 404 });
+
+      const cropById = new Map(cropRecords.map((crop) => [crop.id, crop]));
+      for (const entry of submitted) {
+        const crop = cropById.get(entry.cropId)!;
+        if (/tomato|टमाटर/i.test(crop.name) && entry.parsed!.lines.some((line: any) => !Number.isInteger(line.productionKg))) {
+          return NextResponse.json({ error: 'Tomato quantity must be entered as whole crates.' }, { status: 400 });
+        }
+      }
+
+      const batches = await prisma.$transaction(async (tx) => Promise.all(submitted.map((entry: any) => {
+        const crop = cropById.get(entry.cropId)!;
+        const costs = calculateCosts(crop, entry.parsed.lines);
+        return tx.productionBatch.create({
+          data: {
+            cropId: crop.id,
+            entryDate: entry.parsed.entryDate,
+            ...costs,
+            transportCost: entry.parsed.transportCost,
+            entries: {
+              create: entry.parsed.lines.map((line: any) => ({
+                cropId: crop.id,
+                entryDate: entry.parsed.entryDate,
+                productionKg: line.productionKg,
+                ratePerKg: line.ratePerKg,
+              })),
+            },
+          },
+          include: { entries: true },
+        });
+      })));
+      return NextResponse.json(batches, { status: 201 });
+    }
+
     const parsed = parseSaleBatch(body);
     if (!body.cropId || !parsed) return invalidBatchResponse();
 

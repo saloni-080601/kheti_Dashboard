@@ -81,10 +81,10 @@ export async function GET(request: NextRequest) {
       // Production entries are the dashboard's primary sale source. Use Mandi
       // Sales on a crop/day only when no Crop Management sale was recorded,
       // avoiding counting the same dispatch twice across the two workflows.
-      for (const amount of productionByDay.values()) revenueTotal += amount;
-      for (const [key, amount] of mandiSalesByDay) {
+      productionByDay.forEach((amount) => { revenueTotal += amount; });
+      mandiSalesByDay.forEach((amount, key) => {
         if (!productionByDay.has(key)) revenueTotal += amount;
-      }
+      });
     }
 
     const start = new Date(`${startDate}T00:00:00.000Z`);

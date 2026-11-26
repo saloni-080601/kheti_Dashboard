@@ -29,6 +29,7 @@ type Crop = {
   id: string;
   name: string;
   field?: { name: string };
+  fieldId: string;
   sowingDate: string;
   area: number;
   farmId: string;
@@ -52,6 +53,7 @@ type ProductionDraft = {
 type HistoryEditTarget = { id: string; kind: 'batch' | 'entry' };
 type HistoryEditData = { entryDate: string; lines: SaleLineDraft[]; transportCost: string };
 type HamaliConfig = { ratePerPack: string; packSize: string; packUnit: string };
+type MultiCropSaleDraft = { cropId: string; productionKg: string; ratePerKg: string; transportCost: string };
 
 function indiaDateKey(value: string | Date = new Date()) {
   const raw = typeof value === 'string' ? value : value.toISOString();
@@ -103,6 +105,10 @@ export default function CropsPage() {
   const [error, setError] = useState('');
   const [drafts, setDrafts] = useState<Record<string, ProductionDraft>>({});
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isMultiSaleOpen, setIsMultiSaleOpen] = useState(false);
+  const [multiSaleDate, setMultiSaleDate] = useState(indiaDateKey());
+  const [multiSaleRows, setMultiSaleRows] = useState<MultiCropSaleDraft[]>([]);
+  const [editingCropId, setEditingCropId] = useState('');
   const [newCrop, setNewCrop] = useState({
     farmId: '',
     fieldId: '',
@@ -239,26 +245,84 @@ export default function CropsPage() {
     e.preventDefault();
     setError('');
     try {
+      const editing = Boolean(editingCropId);
       const res = await fetch('/api/crops', {
-        method: 'POST',
+        method: editing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...newCrop,
-          season: 'ZAID',
-          variety: '',
-          estDaysToHarvest: '35',
-          targetYield: '',
-          notes: '',
+          ...(editing ? { id: editingCropId } : {
+            season: 'ZAID',
+            variety: '',
+            estDaysToHarvest: '35',
+            targetYield: '',
+            notes: '',
+          }),
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Unable to add the crop.');
       setSelectedCropId(data.id);
       setIsAddOpen(false);
+      setEditingCropId('');
       setNewCrop((v) => ({ ...v, name: '', area: '' }));
       await loadCrops(false);
     } catch (e: any) {
       setError(e.message || 'Unable to add the crop.');
+    }
+  };
+
+  const openCropEditor = (crop: Crop) => {
+    setEditingCropId(crop.id);
+    setNewCrop({
+      farmId: crop.farmId,
+      fieldId: crop.fieldId || '',
+      name: crop.name,
+      area: String(crop.area),
+      sowingDate: indiaDateKey(crop.sowingDate),
+    });
+    setError('');
+    setIsAddOpen(true);
+  };
+
+  const saveMultiCropSale = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!multiSaleRows.length || multiSaleRows.some((row) => !row.cropId || !row.productionKg || row.ratePerKg === '')) {
+      setError('Select a crop and enter quantity and rate for each row.');
+      return;
+    }
+    if (new Set(multiSaleRows.map((row) => row.cropId)).size !== multiSaleRows.length) {
+      setError('Choose each crop only once in this bill.');
+      return;
+    }
+    const invalidTomato = multiSaleRows.some((row) => {
+      const crop = visibleCrops.find((item) => item.id === row.cropId);
+      return crop && /tomato|टमाटर/i.test(crop.name) && !Number.isInteger(Number(row.productionKg));
+    });
+    if (invalidTomato) {
+      setError('Tomato quantities must be whole crates.');
+      return;
+    }
+    setSaving('multi');
+    try {
+      const res = await fetch('/api/crops/production', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          entryDate: multiSaleDate,
+          entries: multiSaleRows.map((row) => ({ ...row, lines: [{ productionKg: row.productionKg, ratePerKg: row.ratePerKg }] })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Unable to save the multi-crop sale.');
+      setIsMultiSaleOpen(false);
+      setMultiSaleRows([]);
+      await loadCrops(false);
+    } catch (e: any) {
+      setError(e.message || 'Unable to save the multi-crop sale.');
+    } finally {
+      setSaving(null);
     }
   };
 
@@ -328,9 +392,14 @@ export default function CropsPage() {
           <h1 className="flex items-center gap-2 text-2xl font-bold text-stone-900"><Sprout className="h-6 w-6 text-blue-600" /> Crop Production</h1>
         <p className="mt-1 text-sm text-stone-500">Enter multiple quantity and rate lines for the same day.</p>
         </div>
-        <button onClick={() => setIsAddOpen(true)} className="flex items-center gap-1 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
-          <Plus className="h-4 w-4" /> Add Crop
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button onClick={() => { setEditingCropId(''); setNewCrop((v) => ({ ...v, name: '', area: '', sowingDate: indiaDateKey() })); setIsAddOpen(true); }} className="flex items-center gap-1 rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+            <Plus className="h-4 w-4" /> Add Crop
+          </button>
+          <button type="button" onClick={() => { setMultiSaleDate(indiaDateKey()); setMultiSaleRows([{ cropId: selectedCropId || visibleCrops[0]?.id || '', productionKg: '', ratePerKg: '', transportCost: '' }]); setIsMultiSaleOpen(true); }} disabled={!visibleCrops.length} className="flex items-center gap-1 rounded-xl border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50">
+            <Plus className="h-4 w-4" /> Multi-crop Sale
+          </button>
+        </div>
       </header>
 
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">{error}</div>}
@@ -375,9 +444,12 @@ export default function CropsPage() {
           <h2 className="mb-3 text-sm font-bold text-stone-700">सभी फसलें</h2>
           <div className="flex flex-wrap gap-2">
             {visibleCrops.map((crop) => (
-              <button key={crop.id} type="button" onClick={() => setSelectedCropId(crop.id)} aria-pressed={selectedCropId === crop.id} className={`rounded-xl border px-4 py-2 text-sm font-semibold transition-colors ${selectedCropId === crop.id ? 'border-blue-600 bg-blue-600 text-white' : 'border-stone-200 bg-white text-stone-700 hover:border-blue-300 hover:bg-blue-50'}`}>
-                {displayCropName(crop.name)} · {crop.field?.name || 'Field'} · {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(crop.sowingDate))}
-              </button>
+              <div key={crop.id} className={`flex items-center rounded-xl border transition-colors ${selectedCropId === crop.id ? 'border-blue-600 bg-blue-600 text-white' : 'border-stone-200 bg-white text-stone-700 hover:border-blue-300 hover:bg-blue-50'}`}>
+                <button type="button" onClick={() => setSelectedCropId(crop.id)} aria-pressed={selectedCropId === crop.id} className="px-4 py-2 text-left text-sm font-semibold">
+                  {displayCropName(crop.name)} · {crop.field?.name || 'Field'} · {new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(crop.sowingDate))}
+                </button>
+                <button type="button" onClick={() => openCropEditor(crop)} aria-label={`Edit ${crop.name}`} title="Edit crop details" className={`mr-2 rounded-lg p-1.5 ${selectedCropId === crop.id ? 'text-white hover:bg-blue-700' : 'text-stone-500 hover:bg-stone-100 hover:text-blue-700'}`}><Pencil className="h-4 w-4" /></button>
+              </div>
             ))}
           </div>
         </section>
@@ -419,7 +491,46 @@ export default function CropsPage() {
         </div>
       ) : null}
 
-      <Modal isOpen={isAddOpen} onClose={() => setIsAddOpen(false)} title="Add Crop" subtitle="For now, select a crop and field">
+      <Modal isOpen={isMultiSaleOpen} onClose={() => setIsMultiSaleOpen(false)} title="Multi-crop Sale" subtitle="Record one bill for multiple crops on the same date">
+        <form onSubmit={saveMultiCropSale} className="space-y-4">
+          <label className="block text-sm font-semibold text-stone-700">Sale Date
+            <input required type="date" value={multiSaleDate} onChange={(e) => setMultiSaleDate(e.target.value)} className="mt-1 w-full rounded-xl border border-stone-300 bg-white p-2.5" />
+          </label>
+          {multiSaleRows.map((row, index) => {
+            const crop = visibleCrops.find((item) => item.id === row.cropId);
+            const isTomato = Boolean(crop && /tomato|टमाटर/i.test(crop.name));
+            const gross = (Number(row.productionKg) || 0) * (Number(row.ratePerKg) || 0);
+            return <div key={index} className="space-y-3 rounded-xl border border-stone-200 bg-stone-50 p-3">
+              <div className="flex items-center justify-between"><span className="text-sm font-bold text-stone-800">Crop {index + 1}</span>
+                {multiSaleRows.length > 1 && <button type="button" onClick={() => setMultiSaleRows((rows) => rows.filter((_, i) => i !== index))} className="text-xs font-semibold text-rose-600">Remove</button>}
+              </div>
+              <label className="block text-sm font-semibold text-stone-700">Crop
+                <select required value={row.cropId} onChange={(e) => setMultiSaleRows((rows) => rows.map((item, i) => i === index ? { ...item, cropId: e.target.value } : item))} className="mt-1 w-full rounded-xl border border-stone-300 bg-white p-2.5">
+                  <option value="">Select crop</option>
+                  {visibleCrops.filter((item) => item.id === row.cropId || !multiSaleRows.some((other, i) => i !== index && other.cropId === item.id)).map((item) => <option key={item.id} value={item.id}>{displayCropName(item.name)} · {item.field?.name || 'Field'}</option>)}
+                </select>
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-sm font-semibold text-stone-700">Quantity ({isTomato ? 'crates' : 'kg'})
+                  <input required type="number" min={isTomato ? 1 : 0.01} step={isTomato ? 1 : 0.01} value={row.productionKg} onChange={(e) => setMultiSaleRows((rows) => rows.map((item, i) => i === index ? { ...item, productionKg: e.target.value } : item))} className="mt-1 w-full rounded-xl border border-stone-300 bg-white p-2.5" />
+                </label>
+                <label className="text-sm font-semibold text-stone-700">Rate (₹ / {isTomato ? 'crate' : 'kg'})
+                  <input required type="number" min="0" step="0.01" value={row.ratePerKg} onChange={(e) => setMultiSaleRows((rows) => rows.map((item, i) => i === index ? { ...item, ratePerKg: e.target.value } : item))} className="mt-1 w-full rounded-xl border border-stone-300 bg-white p-2.5" />
+                </label>
+                <label className="col-span-2 text-sm font-semibold text-stone-700">Transport (₹)
+                  <input type="number" min="0" step="0.01" value={row.transportCost} onChange={(e) => setMultiSaleRows((rows) => rows.map((item, i) => i === index ? { ...item, transportCost: e.target.value } : item))} className="mt-1 w-full rounded-xl border border-stone-300 bg-white p-2.5" />
+                </label>
+              </div>
+              <p className="text-right text-sm font-bold text-blue-800">Crop gross: {money(gross)}</p>
+            </div>;
+          })}
+          <button type="button" onClick={() => setMultiSaleRows((rows) => [...rows, { cropId: '', productionKg: '', ratePerKg: '', transportCost: '' }])} disabled={multiSaleRows.length >= visibleCrops.length} className="w-full rounded-xl border border-blue-200 bg-white px-4 py-2.5 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50">+ Add Another Crop</button>
+          <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm"><span className="font-semibold text-emerald-900">Combined Gross Amount</span><span className="font-black text-emerald-800">{money(multiSaleRows.reduce((sum, row) => sum + (Number(row.productionKg) || 0) * (Number(row.ratePerKg) || 0), 0))}</span></div>
+          <button type="submit" disabled={saving === 'multi' || !multiSaleRows.length} className="w-full rounded-xl bg-blue-600 px-4 py-2.5 font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{saving === 'multi' ? 'Saving…' : 'Save All Crop Sales'}</button>
+        </form>
+      </Modal>
+
+      <Modal isOpen={isAddOpen} onClose={() => { setIsAddOpen(false); setEditingCropId(''); }} title={editingCropId ? 'Edit Crop' : 'Add Crop'} subtitle={editingCropId ? 'Update crop name, field, area, or planting date' : 'Select a crop and field'}>
         <form onSubmit={addCrop} className="space-y-4">
           {farms.length > 1 && <label className="block text-sm font-medium text-stone-700">Farm
             <select required value={newCrop.farmId} onChange={(e) => setNewCrop((v) => ({ ...v, farmId: e.target.value, fieldId: '' }))} className="mt-1 w-full rounded-xl border border-stone-300 bg-white p-2.5">
@@ -440,7 +551,7 @@ export default function CropsPage() {
           <label className="block text-sm font-medium text-stone-700">Planting Date
             <input required type="date" value={newCrop.sowingDate} onChange={(e) => setNewCrop((v) => ({ ...v, sowingDate: e.target.value }))} className="mt-1 w-full rounded-xl border border-stone-300 p-2.5" />
           </label>
-          <button type="submit" disabled={!fields.some((field) => field.id === newCrop.fieldId)} className="w-full rounded-xl bg-blue-600 px-4 py-2.5 font-semibold text-white hover:bg-blue-700 disabled:opacity-50">Add Crop</button>
+          <button type="submit" disabled={!fields.some((field) => field.id === newCrop.fieldId)} className="w-full rounded-xl bg-blue-600 px-4 py-2.5 font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{editingCropId ? 'Save Crop Changes' : 'Add Crop'}</button>
         </form>
       </Modal>
     </main>
@@ -488,6 +599,9 @@ function CropProductionCard({
   const hamaliPackSize = Math.max(0.01, Number(hamaliConfig.packSize) || 1);
   const draftPackCount = Math.ceil(draftQuantity / hamaliPackSize);
   const draftHamali = draftPackCount * (Number(hamaliConfig.ratePerPack) || 0);
+  const draftTransport = Number(draft.transportCost) || 0;
+  const draftTotalCuts = draftTransport + draftCommission + draftHamali;
+  const draftNetAmount = draftGross - draftTotalCuts;
   const savedConfig = effectiveHamaliConfig(crop);
   const hamaliConfigDirty = hamaliConfig.ratePerPack !== savedConfig.ratePerPack ||
     hamaliConfig.packSize !== savedConfig.packSize || hamaliConfig.packUnit !== savedConfig.packUnit;
@@ -632,13 +746,21 @@ function CropProductionCard({
               </label>
               <label className="text-sm font-semibold text-stone-700">Rate (₹ / {rateUnit})
                 <input required type="number" min="0" step="0.01" value={line.ratePerKg} onChange={(e) => updateLine(index, { ratePerKg: e.target.value })} placeholder="e.g. 40" className="mt-1 w-full rounded-xl border border-stone-300 p-2.5" />
+                <span className="mt-1 block text-xs font-semibold text-blue-700">Line total: {formatCurrency((Number(line.productionKg) || 0) * (Number(line.ratePerKg) || 0))}</span>
               </label>
               <button type="button" disabled={draft.lines.length === 1} onClick={() => onDraftChange({ lines: draft.lines.filter((_, i) => i !== index) })} className="rounded-lg border border-stone-300 px-3 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 disabled:opacity-40">Remove</button>
             </div>
           ))}
           <button type="button" onClick={() => onDraftChange({ lines: [...draft.lines, { productionKg: '', ratePerKg: '' }] })} className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50">+ Add Another Rate</button>
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+          <div>
+            <p className="text-xs font-semibold text-blue-800">Total Amount · Quantity × Rate</p>
+            <p className="text-[11px] text-blue-700">सभी quantity और rate lines का जोड़</p>
+          </div>
+          <p className="text-lg font-black text-blue-900">{formatCurrency(draftGross)}</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {moneyField('Transport Cost', draft.transportCost, (value) => onDraftChange({ transportCost: value }))}
           <div className="rounded-xl border border-stone-200 bg-white p-3 text-sm">
             <span className="block font-semibold text-stone-700">Commission (8%)</span>
@@ -647,6 +769,11 @@ function CropProductionCard({
           <div className="rounded-xl border border-stone-200 bg-white p-3 text-sm">
             <span className="block font-semibold text-stone-700">Hamali ({formatCurrency(Number(hamaliConfig.ratePerPack) || 0)} / pack)</span>
             <span className="mt-1 block text-stone-900">{formatCurrency(draftHamali)} · {draftPackCount} packs</span>
+          </div>
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm">
+            <span className="block font-semibold text-emerald-900">Net Amount</span>
+            <span className="mt-1 block text-lg font-black text-emerald-800">{formatCurrency(draftNetAmount)}</span>
+            <span className="mt-1 block text-[11px] text-emerald-800">Total cut: {formatCurrency(draftTotalCuts)} · Hamali + Transport + Commission</span>
           </div>
         </div>
         {hamaliConfigDirty && <p className="text-sm font-medium text-amber-700">Save Hamali Settings to apply this rate before recording the sale.</p>}

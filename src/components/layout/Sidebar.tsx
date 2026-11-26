@@ -91,12 +91,12 @@ const navItems = [
   //   href: '/sales',
   //   icon: CircleDollarSign,
   // },
-  // {
-  //   name: 'Expenses Tracker',
-  //   subtitle: 'Farm cost tracking',
-  //   href: '/expenses',
-  //   icon: Receipt,
-  // },
+  {
+    name: 'Expenses Tracker',
+    subtitle: 'Farm cost tracking',
+    href: '/expenses',
+    icon: Receipt,
+  },
   {
     name: 'Profit & Loss (P&L)',
     subtitle: 'Profit and loss report',
