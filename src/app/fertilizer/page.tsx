@@ -48,11 +48,11 @@ export default function FertilizerPage() {
   const [editingApplication, setEditingApplication] = useState<ApplicationHistoryRow | null>(null);
   const [applicationEditDate, setApplicationEditDate] = useState('');
   const [applicationEditQuantities, setApplicationEditQuantities] = useState<Record<string, string>>({});
-  const [purchaseForm, setPurchaseForm] = useState({ inventoryItemId: '', name: '', quantity: '', unit: 'kg', totalPrice: '', purchaseDate: today(), supplier: '', notes: '' });
+  const [purchaseForm, setPurchaseForm] = useState({ purchaseDate: today(), supplier: '', notes: '' });
+  const [purchaseRows, setPurchaseRows] = useState([{ inventoryItemId: '__new__', name: '', quantity: '', unit: 'kg', totalPrice: '' }]);
   const [applicationForm, setApplicationForm] = useState({ cropId: '', inventoryItemId: '', quantity: '', applicationDate: today(), method: 'Fertigation', notes: '' });
   const [mixForm, setMixForm] = useState({ cropId: '', name: '', items: [{ inventoryItemId: '', quantity: '', unit: '' }] });
   const [applyDates, setApplyDates] = useState<Record<string, string>>({});
-  const isNewFertilizer = purchaseForm.inventoryItemId === '__new__' || !purchaseForm.inventoryItemId;
   const selectedStock = items.find((item) => item.id === applicationForm.inventoryItemId);
   const totalStockValue = useMemo(() => items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0), [items]);
 
@@ -79,12 +79,6 @@ export default function FertilizerPage() {
   };
 
   useEffect(() => { loadData(); }, [farmId]);
-  useEffect(() => {
-    if (!purchaseForm.inventoryItemId || purchaseForm.inventoryItemId === '__new__') return;
-    const item = items.find((candidate) => candidate.id === purchaseForm.inventoryItemId);
-    if (item) setPurchaseForm((current) => ({ ...current, name: item.name, unit: item.unit }));
-  }, [purchaseForm.inventoryItemId, items]);
-
   const submit = async (event: FormEvent, kind: 'purchase' | 'application') => {
     event.preventDefault(); setSaving(true); setError(''); setMessage('');
     const isPurchase = kind === 'purchase';
@@ -92,13 +86,16 @@ export default function FertilizerPage() {
       const response = await fetch(`/api/fertilizer/${isPurchase ? 'purchases' : 'applications'}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(isPurchase
-          ? { farmId, ...purchaseForm, inventoryItemId: isNewFertilizer ? '' : purchaseForm.inventoryItemId }
+          ? { farmId, ...purchaseForm, entries: purchaseRows.map((row) => ({ ...row, inventoryItemId: row.inventoryItemId === '__new__' ? '' : row.inventoryItemId, ...purchaseForm })) }
           : applicationForm),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to save fertilizer record.');
-      setMessage(isPurchase ? 'Purchase saved and added to stock.' : 'Application saved, stock reduced, and crop expense recorded.');
-      if (isPurchase) setPurchaseForm({ inventoryItemId: '', name: '', quantity: '', unit: 'kg', totalPrice: '', purchaseDate: today(), supplier: '', notes: '' });
+      setMessage(isPurchase ? `${purchaseRows.length} fertilizer purchase${purchaseRows.length === 1 ? '' : 's'} saved and added to stock.` : 'Application saved, stock reduced, and crop expense recorded.');
+      if (isPurchase) {
+        setPurchaseForm({ purchaseDate: today(), supplier: '', notes: '' });
+        setPurchaseRows([{ inventoryItemId: '__new__', name: '', quantity: '', unit: 'kg', totalPrice: '' }]);
+      }
       else setApplicationForm((current) => ({ ...current, inventoryItemId: '', quantity: '', applicationDate: today(), notes: '' }));
       await loadData();
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to save fertilizer record.'); }
@@ -262,17 +259,35 @@ export default function FertilizerPage() {
     </div>
 
     {tab === 'stock' ? <>
-      <form onSubmit={(event) => submit(event, 'purchase')} className="grid gap-3 rounded-2xl border border-stone-200 bg-white p-5 sm:grid-cols-2 lg:grid-cols-3">
-        <h2 className="text-lg font-bold text-stone-900 sm:col-span-2 lg:col-span-3">Record Fertilizer Purchase</h2>
-        <label className={labelClass}>Fertilizer<select value={purchaseForm.inventoryItemId || '__new__'} onChange={(event) => setPurchaseForm((current) => ({ ...current, inventoryItemId: event.target.value, name: event.target.value === '__new__' ? '' : current.name }))} className={inputClass}><option value="__new__">Add new fertilizer</option>{items.map((item) => <option key={item.id} value={item.id}>{item.name} ({item.quantity} {item.unit} in stock)</option>)}</select></label>
-        <label className={labelClass}>Fertilizer Name<input required value={purchaseForm.name} onChange={(event) => setPurchaseForm({ ...purchaseForm, name: event.target.value })} disabled={!isNewFertilizer} placeholder="e.g. Urea, DAP, NPK" className={inputClass} /></label>
-        <label className={labelClass}>Purchase Date<input required type="date" value={purchaseForm.purchaseDate} onChange={(event) => setPurchaseForm({ ...purchaseForm, purchaseDate: event.target.value })} className={inputClass} /></label>
-        <label className={labelClass}>Quantity<input required type="number" min="0.01" step="0.01" value={purchaseForm.quantity} onChange={(event) => setPurchaseForm({ ...purchaseForm, quantity: event.target.value })} className={inputClass} /></label>
-        <label className={labelClass}>Unit<select value={purchaseForm.unit} disabled={!isNewFertilizer} onChange={(event) => setPurchaseForm({ ...purchaseForm, unit: event.target.value })} className={inputClass}><option value="kg">Kilograms (kg)</option><option value="Bag (50kg)">Bag (50 kg)</option><option value="Bag (45kg)">Bag (45 kg)</option><option value="Litre">Litre</option><option value="Packet">Packet</option></select></label>
-        <label className={labelClass}>Total Price for This Quantity (₹)<input required type="number" min="0" step="0.01" value={purchaseForm.totalPrice} onChange={(event) => setPurchaseForm({ ...purchaseForm, totalPrice: event.target.value })} placeholder="Total bill amount" className={inputClass} />{Number(purchaseForm.quantity) > 0 && Number(purchaseForm.totalPrice) >= 0 && purchaseForm.totalPrice !== '' && <span className="mt-1 block text-xs font-medium text-stone-500">Effective rate: {currency(Number(purchaseForm.totalPrice) / Number(purchaseForm.quantity))} per {purchaseForm.unit}</span>}</label>
-        <label className={labelClass}>Purchased From<input value={purchaseForm.supplier} onChange={(event) => setPurchaseForm({ ...purchaseForm, supplier: event.target.value })} placeholder="Shop or supplier" className={inputClass} /></label>
-        <label className={labelClass}>Notes (optional)<input value={purchaseForm.notes} onChange={(event) => setPurchaseForm({ ...purchaseForm, notes: event.target.value })} className={inputClass} /></label>
-        <button type="submit" disabled={saving || !farmId} className="flex items-center justify-center gap-2 self-end rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"><Plus className="h-4 w-4" />{saving ? 'Saving…' : 'Save Purchase'}</button>
+      <form onSubmit={(event) => submit(event, 'purchase')} className="space-y-4 rounded-2xl border border-stone-200 bg-white p-5">
+        <div><h2 className="text-lg font-bold text-stone-900">Record Fertilizer Purchase</h2><p className="mt-1 text-xs text-stone-500">Add multiple fertilizers from the same purchase and save them together.</p></div>
+        <div className="space-y-3">
+          {purchaseRows.map((row, index) => {
+            const selectedItem = items.find((item) => item.id === row.inventoryItemId);
+            const updateRow = (changes: Partial<(typeof purchaseRows)[number]>) => setPurchaseRows((rows) => rows.map((current, rowIndex) => rowIndex === index ? { ...current, ...changes } : current));
+            return <div key={index} className="grid items-end gap-3 rounded-xl border border-stone-200 bg-stone-50/70 p-3 sm:grid-cols-2 lg:grid-cols-6">
+              <label className={labelClass}>Fertilizer
+                <select value={row.inventoryItemId} onChange={(event) => {
+                  const inventoryItemId = event.target.value;
+                  const item = items.find((candidate) => candidate.id === inventoryItemId);
+                  updateRow({ inventoryItemId, name: item?.name || '', unit: item?.unit || 'kg' });
+                }} className={inputClass}><option value="__new__">Add new</option>{items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+              </label>
+              <label className={labelClass}>Name<input required value={row.name} disabled={Boolean(selectedItem)} onChange={(event) => updateRow({ name: event.target.value })} placeholder="Urea, DAP, NPK" className={inputClass} /></label>
+              <label className={labelClass}>Quantity<input required type="number" min="0.01" step="0.01" value={row.quantity} onChange={(event) => updateRow({ quantity: event.target.value })} className={inputClass} /></label>
+              <label className={labelClass}>Unit<select value={row.unit} disabled={Boolean(selectedItem)} onChange={(event) => updateRow({ unit: event.target.value })} className={inputClass}><option value="kg">Kilograms (kg)</option><option value="Bag (50kg)">Bag (50 kg)</option><option value="Bag (45kg)">Bag (45 kg)</option><option value="Litre">Litre</option><option value="Packet">Packet</option></select></label>
+              <label className={labelClass}>Total Price (₹)<input required type="number" min="0" step="0.01" value={row.totalPrice} onChange={(event) => updateRow({ totalPrice: event.target.value })} className={inputClass} /></label>
+              <button type="button" disabled={purchaseRows.length === 1} onClick={() => setPurchaseRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index))} className="rounded-xl border border-rose-200 px-3 py-2.5 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-40">Remove</button>
+            </div>;
+          })}
+          <button type="button" onClick={() => setPurchaseRows((rows) => [...rows, { inventoryItemId: '__new__', name: '', quantity: '', unit: 'kg', totalPrice: '' }])} className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"><Plus className="h-4 w-4" /> Add fertilizer</button>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <label className={labelClass}>Purchase Date<input required type="date" value={purchaseForm.purchaseDate} onChange={(event) => setPurchaseForm({ ...purchaseForm, purchaseDate: event.target.value })} className={inputClass} /></label>
+          <label className={labelClass}>Purchased From<input value={purchaseForm.supplier} onChange={(event) => setPurchaseForm({ ...purchaseForm, supplier: event.target.value })} placeholder="Shop or supplier" className={inputClass} /></label>
+          <label className={labelClass}>Notes (optional)<input value={purchaseForm.notes} onChange={(event) => setPurchaseForm({ ...purchaseForm, notes: event.target.value })} className={inputClass} /></label>
+        </div>
+        <div className="flex justify-end"><button type="submit" disabled={saving || !farmId} className="flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"><Plus className="h-4 w-4" />{saving ? 'Saving…' : 'Save Purchases'}</button></div>
       </form>
       <section className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm"><div className="flex items-center justify-between border-b border-stone-200 bg-stone-50 px-5 py-4"><h2 className="font-bold text-stone-800">Available Fertilizer Stock</h2><span className="text-sm text-stone-500">{items.length} items</span></div>
         {loading ? <p className="p-8 text-center text-stone-500">Loading stock…</p> : items.length === 0 ? <p className="p-8 text-center text-sm text-stone-500">No fertilizer in stock yet. Record your first purchase above.</p> : <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">{items.map((item) => <article key={item.id} className="rounded-xl border border-stone-200 p-4"><h3 className="font-bold text-stone-900">{item.name}</h3><p className="mt-2 text-sm text-stone-500">Available stock</p><p className={`text-xl font-bold ${item.quantity <= item.minStockAlert ? 'text-amber-700' : 'text-stone-900'}`}>{item.quantity} {item.unit}</p><p className="mt-1 text-sm text-stone-600">Average cost: {currency(item.unitPrice)} / unit</p>{item.quantity <= item.minStockAlert && <p className="mt-2 text-xs font-semibold text-amber-700">Low stock</p>}</article>)}</div>}

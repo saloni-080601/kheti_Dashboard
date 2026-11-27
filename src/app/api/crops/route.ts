@@ -296,6 +296,7 @@ export async function PUT(request: NextRequest) {
       name,
       fieldId,
       area,
+      targetYield,
     } = body;
 
     if (!id) return NextResponse.json({ error: 'Crop ID is required' }, { status: 400 });
@@ -307,6 +308,13 @@ export async function PUT(request: NextRequest) {
 
     if (!existingCrop) {
       return NextResponse.json({ error: 'Crop not found' }, { status: 404 });
+    }
+
+    if (targetYield !== undefined && targetYield !== null && targetYield !== '') {
+      const parsedTargetYield = Number(targetYield);
+      if (!Number.isFinite(parsedTargetYield) || parsedTargetYield <= 0) {
+        return NextResponse.json({ error: 'Expected production must be greater than zero.' }, { status: 400 });
+      }
     }
 
     let updatedArea: number | undefined;
@@ -415,6 +423,7 @@ export async function PUT(request: NextRequest) {
         ...(name !== undefined ? { name: String(name).trim() } : {}),
         ...(fieldId !== undefined ? { fieldId } : {}),
         ...(updatedArea !== undefined ? { area: updatedArea } : {}),
+        ...(targetYield !== undefined ? { targetYield: targetYield === null || targetYield === '' ? null : Number(targetYield) } : {}),
         currentStageNumber: newStageNumber,
         currentStageName: newStageName,
         estDaysToHarvest: newDaysToHarvest,

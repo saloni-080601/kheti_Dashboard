@@ -21,36 +21,43 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const farmId = String(body.farmId || '');
-    const quantity = Number(body.quantity);
-    const totalCost = Number(body.totalPrice ?? (Number(body.ratePerUnit) * quantity));
-    const ratePerUnit = quantity > 0 ? totalCost / quantity : 0;
-    const purchaseDate = new Date(body.purchaseDate);
-    const unit = String(body.unit || 'kg');
-    const name = String(body.name || '').trim();
-    if (!farmId || !name || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(totalCost) || totalCost < 0 || Number.isNaN(purchaseDate.getTime())) {
-      return NextResponse.json({ error: 'Fertilizer, quantity, total price, farm, and purchase date are required.' }, { status: 400 });
+    const isBulk = Array.isArray(body.entries);
+    const rawEntries = isBulk ? body.entries : [body];
+    if (!farmId || !rawEntries.length) {
+      return NextResponse.json({ error: 'Farm and at least one fertilizer purchase are required.' }, { status: 400 });
     }
-    const purchase = await prisma.$transaction(async (tx) => {
+    const entries = rawEntries.map((entry: any) => {
+      const quantity = Number(entry.quantity);
+      const totalCost = Number(entry.totalPrice ?? (Number(entry.ratePerUnit) * quantity));
+      const purchaseDate = new Date(entry.purchaseDate || body.purchaseDate);
+      return { ...entry, quantity, totalCost, ratePerUnit: quantity > 0 ? totalCost / quantity : 0, purchaseDate, unit: String(entry.unit || 'kg'), name: String(entry.name || '').trim() };
+    });
+    const invalidIndex = entries.findIndex((entry: any) => !entry.name || !Number.isFinite(entry.quantity) || entry.quantity <= 0 || !Number.isFinite(entry.totalCost) || entry.totalCost < 0 || Number.isNaN(entry.purchaseDate.getTime()));
+    if (invalidIndex >= 0) {
+      return NextResponse.json({ error: `Check fertilizer name, quantity, total price, and purchase date in row ${invalidIndex + 1}.` }, { status: 400 });
+    }
+    const purchases = await prisma.$transaction(async (tx) => {
       const farm = await tx.farm.findUnique({ where: { id: farmId } });
       if (!farm) throw new Error('Farm not found.');
-      let item = body.inventoryItemId
-        ? await tx.inventoryItem.findFirst({ where: { id: String(body.inventoryItemId), farmId, category: 'FERTILIZER' } })
-        : await tx.inventoryItem.findFirst({ where: { farmId, category: 'FERTILIZER', name: { equals: name, mode: 'insensitive' }, unit } });
-      if (item && item.unit !== unit) throw new Error(`This fertilizer uses ${item.unit}. Use the same unit for every purchase.`);
-      if (body.inventoryItemId && !item) throw new Error('Selected fertilizer stock was not found.');
-      if (!item) {
-        item = await tx.inventoryItem.create({ data: { farmId, name, category: 'FERTILIZER', quantity: 0, unit, unitPrice: 0, minStockAlert: 5 } });
+      const created = [];
+      for (const entry of entries) {
+        let item = entry.inventoryItemId
+          ? await tx.inventoryItem.findFirst({ where: { id: String(entry.inventoryItemId), farmId, category: 'FERTILIZER' } })
+          : await tx.inventoryItem.findFirst({ where: { farmId, category: 'FERTILIZER', name: { equals: entry.name, mode: 'insensitive' }, unit: entry.unit } });
+        if (item && item.unit !== entry.unit) throw new Error(`${entry.name} uses ${item.unit}. Use the same unit for every purchase.`);
+        if (entry.inventoryItemId && !item) throw new Error('Selected fertilizer stock was not found.');
+        if (!item) item = await tx.inventoryItem.create({ data: { farmId, name: entry.name, category: 'FERTILIZER', quantity: 0, unit: entry.unit, unitPrice: 0, minStockAlert: 5 } });
+        const totalQuantity = item.quantity + entry.quantity;
+        const averageRate = totalQuantity > 0 ? ((item.quantity * item.unitPrice) + (entry.quantity * entry.ratePerUnit)) / totalQuantity : entry.ratePerUnit;
+        await tx.inventoryItem.update({ where: { id: item.id }, data: { quantity: totalQuantity, unitPrice: averageRate } });
+        created.push(await tx.fertilizerPurchase.create({
+          data: { farmId, inventoryItemId: item.id, purchaseDate: entry.purchaseDate, quantity: entry.quantity, unit: entry.unit, ratePerUnit: entry.ratePerUnit, totalCost: entry.totalCost, supplier: String(entry.supplier ?? body.supplier ?? '').trim() || null, notes: String(entry.notes ?? body.notes ?? '').trim() || null },
+          include: { inventoryItem: true },
+        }));
       }
-      const oldQuantity = item.quantity;
-      const totalQuantity = oldQuantity + quantity;
-      const averageRate = totalQuantity > 0 ? ((oldQuantity * item.unitPrice) + (quantity * ratePerUnit)) / totalQuantity : ratePerUnit;
-      await tx.inventoryItem.update({ where: { id: item.id }, data: { quantity: totalQuantity, unitPrice: averageRate } });
-      return tx.fertilizerPurchase.create({
-        data: { farmId, inventoryItemId: item.id, purchaseDate, quantity, unit, ratePerUnit, totalCost, supplier: body.supplier?.trim() || null, notes: body.notes?.trim() || null },
-        include: { inventoryItem: true },
-      });
+      return created;
     });
-    return NextResponse.json(purchase, { status: 201 });
+    return NextResponse.json(isBulk ? purchases : purchases[0], { status: 201 });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to save fertilizer purchase.';
     return NextResponse.json({ error: message }, { status: message === 'Farm not found.' ? 404 : 400 });

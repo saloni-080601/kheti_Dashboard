@@ -69,8 +69,50 @@ export async function GET(request: NextRequest) {
       const netProfit = totalIncome - totalExpenses;
       const profitPerAcre = crop.area > 0 ? netProfit / crop.area : 0;
       const totalYield = crop.harvestLogs.reduce((sum, h) => sum + h.quantity, 0);
+      const actualProduction = crop.productionEntries.reduce((sum, entry) => sum + entry.productionKg, 0) +
+        crop.productionBatches.reduce((sum, batch) => sum + batch.entries.reduce((batchSum, entry) => batchSum + entry.productionKg, 0), 0);
       const costPerQuintal = totalYield > 0 ? totalExpenses / totalYield : 0;
       const avgSellingPrice = totalYield > 0 && totalIncome > 0 ? totalIncome / totalYield : 0;
+      const salesHistory = [
+        ...crop.productionBatches.map((batch) => ({
+          id: batch.id,
+          source: 'Production',
+          entryDate: batch.entryDate,
+          unit: /tomato|टमाटर/i.test(crop.name) ? 'crates' : 'kg',
+          entries: batch.entries.map((entry) => ({
+            productionKg: entry.productionKg,
+            ratePerKg: entry.ratePerKg,
+          })),
+          transportCost: batch.transportCost,
+          hamaliCost: batch.hamaliCost,
+          commissionCost: batch.commissionCost,
+        })),
+        ...crop.productionEntries.map((entry) => ({
+          id: entry.id,
+          source: 'Production',
+          entryDate: entry.entryDate,
+          unit: /tomato|टमाटर/i.test(crop.name) ? 'crates' : 'kg',
+          entries: [{ productionKg: entry.productionKg, ratePerKg: entry.ratePerKg }],
+          transportCost: entry.transportCost,
+          hamaliCost: entry.hamaliCost,
+          commissionCost: entry.commissionCost,
+        })),
+        ...crop.sales.map((sale) => ({
+          id: sale.id,
+          source: 'Mandi',
+          entryDate: sale.saleDate,
+          unit: sale.unit,
+          entries: [{ productionKg: sale.quantity, ratePerKg: sale.pricePerUnit }],
+          grossAmount: sale.totalAmount,
+          transportCost: sale.transportCost || 0,
+          hamaliCost: sale.hamaliCost || 0,
+          commissionCost: sale.commission || 0,
+          otherDeductions: Math.max(0, sale.deductions - (sale.transportCost || 0) - (sale.hamaliCost || 0) - (sale.commission || 0)),
+          netAmount: sale.netAmount,
+          buyerName: sale.buyerName,
+          mandiName: sale.mandiName,
+        })),
+      ].sort((a, b) => b.entryDate.getTime() - a.entryDate.getTime());
 
       // Expense category breakdown for this crop
       const categoryBreakdown: Record<string, number> = {};
@@ -81,6 +123,8 @@ export async function GET(request: NextRequest) {
       return {
         id: crop.id,
         name: crop.name,
+        fieldId: crop.fieldId,
+        sowingDate: crop.sowingDate,
         variety: crop.variety,
         season: crop.season,
         area: crop.area,
@@ -92,9 +136,12 @@ export async function GET(request: NextRequest) {
         netProfit,
         profitPerAcre,
         totalYield,
+        targetYield: crop.targetYield,
+        actualProduction,
         costPerQuintal,
         avgSellingPrice,
         categoryBreakdown,
+        salesHistory,
       };
     });
 
